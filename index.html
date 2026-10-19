@@ -6638,6 +6638,7 @@ var APP = (function () {
   }
   function animateBars(el) { requestAnimationFrame(function () { $$('.bar i[data-w]', el).forEach(function (b) { b.style.width = b.getAttribute('data-w') + '%'; }); }); }
   function needsBackup() {
+    return false; // web de los padres en GitHub: sin recordatorio de copia
     var n = S.sessions.filter(function (s) { return s.done; }).length;
     if (n < 3) return false;
     var last = S.lastExport || 0;
@@ -7998,21 +7999,63 @@ var APP = (function () {
 <script>
 (function () {
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {}); } catch (e) {}
+  try { if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register('sw.js').catch(function () {}); } catch (e) {}
+  var ua = navigator.userAgent || '';
+  var ios = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  var icon = window.navigator.standalone === true || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+  var CARD = 'position:fixed;left:12px;right:12px;bottom:calc(84px + env(safe-area-inset-bottom,0px));z-index:9999;background:#1F1D1A;color:#FBF9F5;border-radius:14px;padding:14px 16px;font:16px/1.4 -apple-system,BlinkMacSystemFont,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,.25);max-width:520px;margin:0 auto';
+  var BTN = 'margin:10px 8px 0 0;font:600 16px -apple-system,sans-serif;padding:10px 16px;border-radius:10px;border:0;';
+  function put(b) { var go = function () { document.body.appendChild(b); }; if (document.body) go(); else document.addEventListener('DOMContentLoaded', go); }
+  // a) Safari del iPhone sin icono: explicar lo del icono (solo se quita para esta visita)
+  if (ios && !icon) {
+    var h = document.createElement('div'); h.setAttribute('role', 'note'); h.style.cssText = CARD;
+    h.innerHTML = '<b>Para que no se pierda nada</b><br>Toca Compartir y elige <b>“Añadir a pantalla de inicio”</b>. Luego ábrela siempre desde ese icono.<br><button type="button" style="' + BTN + 'background:#FBF9F5;color:#1F1D1A">Entendido</button>';
+    h.querySelector('button').onclick = function () { h.remove(); };
+    put(h); return;
+  }
+  // b) web vacía: ofrecer recuperar lo copiado en la rutina anterior
+  var K = 'fza.v1.sinRecuperar';
   try {
-    var ua = navigator.userAgent || '';
-    var ios = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-    var icon = window.navigator.standalone === true || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
-    if (!ios || icon) return;
-    var K = 'fza.v1.avisoIcono';
-    try { if (localStorage.getItem(K)) return; } catch (e) {}
-    var b = document.createElement('div');
-    b.setAttribute('role', 'note');
-    b.style.cssText = 'position:fixed;left:12px;right:12px;bottom:calc(84px + env(safe-area-inset-bottom,0px));z-index:9999;background:#1F1D1A;color:#FBF9F5;border-radius:14px;padding:14px 16px;font:16px/1.4 -apple-system,BlinkMacSystemFont,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,.25)';
-    b.innerHTML = '<b>Para que no se pierda nada</b><br>Toca Compartir y elige <b>“Añadir a pantalla de inicio”</b>. Luego ábrela siempre desde ese icono.<br><button type="button" style="margin-top:10px;font:600 16px -apple-system,sans-serif;padding:8px 16px;border-radius:10px;border:0;background:#FBF9F5;color:#1F1D1A">Entendido</button>';
-    b.querySelector('button').onclick = function () { b.remove(); try { localStorage.setItem(K, '1'); } catch (e) {} };
-    var go = function () { document.body.appendChild(b); };
-    if (document.body) go(); else document.addEventListener('DOMContentLoaded', go);
-  } catch (e) {}
+    if (localStorage.getItem(K)) return;
+    var raw = localStorage.getItem('fza.v1'), st = raw ? JSON.parse(raw) : null;
+    if (st && ((st.sessions || []).length || (st.notes || []).length)) return;
+  } catch (e) { return; }
+  var r = document.createElement('div'); r.id = 'recuperar'; r.setAttribute('role', 'dialog'); r.style.cssText = CARD;
+  r.innerHTML = '<b>¿Tenías entrenos en la rutina de antes?</b><br>Si copiaste tus datos allí, tráelos con un toque.' +
+    '<div><button type="button" data-r="si" style="' + BTN + 'background:#FBF9F5;color:#1F1D1A">Recuperar mis datos</button>' +
+    '<button type="button" data-r="no" style="' + BTN + 'background:transparent;color:#FBF9F5;border:1px solid rgba(251,249,245,.4)">No</button></div>' +
+    '<div data-r="manual" hidden><p style="margin:10px 0 6px">Mantén el dedo en el recuadro, toca <b>Pegar</b> y luego <b>Recuperar</b>.</p>' +
+    '<textarea aria-label="Pegar aquí los datos copiados" style="width:100%;box-sizing:border-box;height:70px;border-radius:10px;border:0;padding:8px;font:15px -apple-system,sans-serif"></textarea>' +
+    '<button type="button" data-r="pegado" style="' + BTN + 'background:#FBF9F5;color:#1F1D1A">Recuperar</button></div>' +
+    '<p data-r="msg" style="margin:8px 0 0;color:#F3C9A8" hidden></p>';
+  function msg(t) { var m = r.querySelector('[data-r=msg]'); m.textContent = t; m.hidden = false; }
+  function restore(text) {
+    text = String(text || ''); var at = text.indexOf('FZA1:');
+    if (at < 0) return false;
+    var j = text.slice(at + 5); j = j.slice(0, j.lastIndexOf('}') + 1);
+    try {
+      var o = JSON.parse(j);
+      if (!o || o.v !== 1 || !o.sessions || (o.app && o.app !== 'padres')) return false;
+      window.APP.replaceState(o);
+      try { localStorage.setItem(K, '1'); } catch (e) {}
+      r.innerHTML = '<b>Datos recuperados ✓</b>';
+      setTimeout(function () { location.reload(); }, 900);
+      return true;
+    } catch (e) { return false; }
+  }
+  function manual() { r.querySelector('[data-r=manual]').hidden = false; var t = r.querySelector('textarea'); try { t.focus(); } catch (e) {} }
+  r.addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-r]'); if (!b) return;
+    var k = b.getAttribute('data-r');
+    if (k === 'no') { r.remove(); try { localStorage.setItem(K, '1'); } catch (e2) {} }
+    if (k === 'si') {
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        navigator.clipboard.readText().then(function (t) { if (!restore(t)) { msg('No encuentro los datos copiados. Pégalos aquí:'); manual(); } }, manual);
+      } else manual();
+    }
+    if (k === 'pegado') { if (!restore(r.querySelector('textarea').value)) msg('Eso no son los datos de la rutina. Vuelve a copiarlos en la rutina de antes.'); }
+  });
+  put(r);
 })();
 </script>
 </body></html>
